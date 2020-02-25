@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 
 import responses
 from moto import mock_apigateway, mock_cognitoidp, settings
+from moto.apigateway.exceptions import BadRequestException, ValidationException
 from moto.core import ACCOUNT_ID
 from nose.tools import assert_raises
 
@@ -1735,6 +1736,131 @@ def test_get_usage_plans_using_key_id():
     len(only_plans_with_key["items"]).should.equal(1)
     only_plans_with_key["items"][0]["name"].should.equal(attached_plan["name"])
     only_plans_with_key["items"][0]["id"].should.equal(attached_plan["id"])
+
+
+@mock_apigateway
+def test_update_usage_plan():
+    region_name = "us-west-2"
+
+    plan_name = "TestPlan"
+    product_code = "1234"
+
+    client = boto3.client("apigateway", region_name=region_name)
+
+    usage_plan = client.create_usage_plan(name="TestPlan")
+    usage_plan_id = usage_plan["id"]
+
+    update_response = client.update_usage_plan(
+        usagePlanId=usage_plan_id,
+        patchOperations=[
+            {
+                "op": "add",
+                "path": "/productCode",
+                "value": product_code
+            },
+        ]
+    )
+
+    # Check response object is good
+    # createdDate is hard to match against, remove it
+    update_response.pop("createdDate", None)
+    # this is hard to match against, so remove it
+    update_response.pop("ResponseMetadata")
+    update_response.should.equal(
+        {
+            "id": usage_plan_id,
+            "name": plan_name,
+            "productCode": product_code,
+            "apiStages": []
+        }
+    )
+
+    # Check persisted object is good
+    usage_plan = client.get_usage_plan(usagePlanId=usage_plan_id)
+    usage_plan.pop("ResponseMetadata")
+    usage_plan.should.equal(
+        {
+            "id": usage_plan_id,
+            "name": plan_name,
+            "productCode": product_code,
+            "apiStages": []
+        }
+    )
+
+    # Remove productCode
+    update_response = client.update_usage_plan(
+        usagePlanId=usage_plan_id,
+        patchOperations=[
+            {
+                "op": "remove",
+                "path": "/productCode",
+                "value": product_code,
+            },
+        ]
+    )
+
+    # Check response object does not contain productCode
+    # createdDate is hard to match against, remove it
+    update_response.pop("createdDate", None)
+    # this is hard to match against, so remove it
+    update_response.pop("ResponseMetadata")
+
+    update_response.should.equal(
+        {
+            "id": usage_plan_id,
+            "name": plan_name,
+            "apiStages": []
+        }
+    )
+
+    update_response = client.update_usage_plan(
+            usagePlanId=usage_plan_id,
+            patchOperations=[
+                {
+                    "op": "add",
+                    "path": "/productCode",
+                    "value": product_code
+                },
+            ]
+        )
+
+@mock_apigateway
+def test_update_usage_plan_exceptions():
+    region_name = "us-west-2"
+
+    product_code = "1234"
+
+    client = boto3.client("apigateway", region_name=region_name)
+
+    usage_plan = client.create_usage_plan(name="TestPlan")
+    usage_plan_id = usage_plan["id"]
+
+    with assert_raises(ValidationException) as ex:
+        client.update_usage_plan(
+            usagePlanId=usage_plan_id,
+            patchOperations=[
+                {
+                    "op": "invalidMethod",
+                    "path": "/productCode",
+                    "value": product_code
+                },
+            ]
+        )
+    ex.exception.response["Error"]["Code"].should.equal("ValidationException")
+
+    with assert_raises(BadRequestException) as ex:
+        client.update_usage_plan(
+            usagePlanId=usage_plan_id,
+            patchOperations=[
+                {
+                    "op": "add",
+                    "path": "invalidPath",
+                    "value": product_code
+                },
+            ]
+        )
+
+    ex.exception.response["Error"]["Code"].should.equal("BadRequestException")
 
 
 def create_method_integration(client, api_id, httpMethod="GET"):

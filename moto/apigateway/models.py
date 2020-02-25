@@ -7,6 +7,8 @@ import re
 import requests
 import time
 
+import jsonpatch
+
 from boto3.session import Session
 
 try:
@@ -34,7 +36,8 @@ from .exceptions import (
     NoIntegrationDefined,
     NoMethodDefined,
     ApiKeyAlreadyExists,
-)
+    ValidationException,
+    BadRequestException)
 
 STAGE_URL = "https://{api_id}.execute-api.{region_name}.amazonaws.com/{stage_name}"
 
@@ -419,6 +422,24 @@ class ApiKey(BaseModel, dict):
 
 
 class UsagePlan(BaseModel, dict):
+    patch_paths = [
+        re.compile("/apiStages"),
+        re.compile("/productCode"),
+        re.compile("/quota/period"),
+        re.compile("/quota/limit"),
+        re.compile("/quota/offset"),
+        re.compile("/throttle/rateLimit"),
+        re.compile("/throttle/burstLimit"),
+        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/rateLimit"),
+        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/burstLimit"),
+        re.compile(r"/apiStages/.*:.*/throttle")
+    ]
+    api_stages_paths = [
+        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/rateLimit"),
+        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/burstLimit"),
+        re.compile(r"/apiStages/.*:.*/throttle")
+    ]
+
     def __init__(
         self,
         name=None,
@@ -436,6 +457,61 @@ class UsagePlan(BaseModel, dict):
         self["throttle"] = throttle
         self["quota"] = quota
         self["tags"] = tags
+
+
+    @staticmethod
+    def _patch_usage_plan_validate_op(patch_operations):
+        """ Mimics AWS' validation """
+        ops = ["add", "remove", "move", "test", "replace", "copy"]
+        count = 1
+
+        validation_error_message_template = ("Value {value} at 'updateUsagePlanInput.patchOperations.{count}.member.op'"
+                                             " failed to satisfy constraint: Member must satisfy enum value set: "
+                                             "[add, remove, move, test, replace, copy]")
+        validation_errors = []
+
+        for operation in patch_operations:
+            op = operation['op']
+            if op not in ops:
+                message = validation_error_message_template.format(value=op, count=count)
+                validation_errors.append(message)
+            count += 1
+
+        if validation_errors:
+            message = "{val_errors} validation error detected: {val_message}".format(
+                val_errors=len(validation_errors),
+                val_message="; ".join(validation_errors)
+            )
+            raise ValidationException(message)
+
+    @classmethod
+    def _api_stages_patch(cls, patch_operations):
+        """ /apiStages do not follow rfc6902 JsonPatch """
+
+        for operation in patch_operations:
+            path = operation["path"]
+            if not any(api_stage_path.match(path) for api_stage_path in cls.api_stages_paths):
+
+    @classmethod
+    def _patch_usage_plan_validate_paths(cls, patch_operations):
+        """ Mimics AWS' validation """
+
+        for operation in patch_operations:
+            path = operation["path"]
+            if not any(patch_path.match(path) for patch_path in cls.patch_paths):
+                message = "Invalid patch path '{path}' specified for op '{op}'. Must be one of: {valid_paths}".format(
+                    path=path,
+                    op=operation["op"],
+                    valid_paths=", ".join([x.pattern for x in cls.patch_paths])
+                )
+
+                raise BadRequestException(error_type="BadRequestException", message=message)
+
+    def apply_operations(self, patch_operations):
+        self._patch_usage_plan_validate_op(patch_operations=patch_operations)
+        self._patch_usage_plan_validate_paths(patch_operations=patch_operations)
+
+        return jsonpatch.apply_patch(self, patch=patch_operations, in_place=True)
 
 
 class UsagePlanKey(BaseModel, dict):
@@ -961,6 +1037,10 @@ class APIGatewayBackend(BaseBackend):
     def delete_usage_plan(self, usage_plan_id):
         self.usage_plans.pop(usage_plan_id)
         return {}
+
+    def update_usage_plan(self, usage_plan_id, patch_operations):
+        usage_plan = self.get_usage_plan(usage_plan_id=usage_plan_id)
+        return usage_plan.apply_operations(patch_operations)
 
     def create_usage_plan_key(self, usage_plan_id, payload):
         if usage_plan_id not in self.usage_plan_keys:

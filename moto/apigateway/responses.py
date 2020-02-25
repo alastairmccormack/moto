@@ -1,6 +1,7 @@
 from __future__ import unicode_literals
 
 import json
+import re
 
 from moto.core.responses import BaseResponse
 from .models import apigateway_backends
@@ -11,6 +12,7 @@ from .exceptions import (
     AuthorizerNotFoundException,
     StageNotFoundException,
     ApiKeyAlreadyExists,
+    ValidationException
 )
 
 API_KEY_SOURCES = ["AUTHORIZER", "HEADER"]
@@ -19,6 +21,7 @@ ENDPOINT_CONFIGURATION_TYPES = ["PRIVATE", "EDGE", "REGIONAL"]
 
 
 class APIGatewayResponse(BaseResponse):
+
     def error(self, type_, message, status=400):
         return (
             status,
@@ -479,13 +482,20 @@ class APIGatewayResponse(BaseResponse):
         self.setup_class(request, full_url, headers)
 
         url_path_parts = self.path.split("/")
-        usage_plan = url_path_parts[2]
+        usage_plan_id = url_path_parts[2]
 
         if self.method == "GET":
-            usage_plan_response = self.backend.get_usage_plan(usage_plan)
+            usage_plan_response = self.backend.get_usage_plan(usage_plan_id)
         elif self.method == "DELETE":
-            usage_plan_response = self.backend.delete_usage_plan(usage_plan)
+            usage_plan_response = self.backend.delete_usage_plan(usage_plan_id)
+        elif self.method == "PATCH":
+            patch_operations = self._get_param("patchOperations")
+            usage_plan_response = self.backend.update_usage_plan(
+                usage_plan_id=usage_plan_id, patch_operations=patch_operations
+            )
+
         return 200, {}, json.dumps(usage_plan_response)
+
 
     def usage_plan_keys(self, request, full_url, headers):
         self.setup_class(request, full_url, headers)

@@ -14,6 +14,13 @@ class AwsProxyNotAllowed(BadRequestException):
         )
 
 
+class ValidationException(BadRequestException):
+    def __init__(self, message):
+        super(ValidationException, self).__init__(
+            "Validation Exception", message
+        )
+
+
 class CrossAccountNotAllowed(RESTError):
     def __init__(self):
         super(CrossAccountNotAllowed, self).__init__(
