@@ -49,7 +49,8 @@ install_requires = [
     "idna<2.9,>=2.5",
     "cfn-lint>=0.4.0",
     "sshpubkeys>=3.1.0,<4.0",
-    "jsonpatch>=1.25,<2.0"
+    "jsonpatch>=1.25,<2.0",
+    "jmespath>=0.9.5,<1.0.0"
 ]
 
 extras_require = {

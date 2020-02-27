@@ -4,6 +4,8 @@ from __future__ import unicode_literals
 import random
 import string
 import re
+
+import jmespath
 import requests
 import time
 
@@ -422,6 +424,11 @@ class ApiKey(BaseModel, dict):
 
 
 class UsagePlan(BaseModel, dict):
+    patch_api_stage_resource_path = re.compile(
+            r"/apiStages/(?P<api_id>.*):(?P<stage>.*)/throttle/(?P<resource>.*)/"
+            r"(?P<method>DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/(?P<throttle>rateLimit|burstLimit)"
+    )
+    patch_api_stage_throttle = re.compile(r"/apiStages/.*:.*/throttle")
     patch_paths = [
         re.compile("/apiStages"),
         re.compile("/productCode"),
@@ -430,14 +437,8 @@ class UsagePlan(BaseModel, dict):
         re.compile("/quota/offset"),
         re.compile("/throttle/rateLimit"),
         re.compile("/throttle/burstLimit"),
-        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/rateLimit"),
-        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/burstLimit"),
-        re.compile(r"/apiStages/.*:.*/throttle")
-    ]
-    api_stages_paths = [
-        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/rateLimit"),
-        re.compile(r"/apiStages/.*:.*/throttle/.*/(DELETE|GET|POST|PUT|PATCH|OPTIONS|HEAD|ANY|\*)/burstLimit"),
-        re.compile(r"/apiStages/.*:.*/throttle")
+        patch_api_stage_resource_path,
+        patch_api_stage_throttle
     ]
 
     def __init__(
@@ -486,11 +487,21 @@ class UsagePlan(BaseModel, dict):
 
     @classmethod
     def _api_stages_patch(cls, patch_operations):
-        """ /apiStages do not follow rfc6902 JsonPatch """
+        # /apiStages do not follow rfc6902 JsonPatch
+        # Use custom processing
 
         for operation in patch_operations:
             path = operation["path"]
-            if not any(api_stage_path.match(path) for api_stage_path in cls.api_stages_paths):
+
+            patch_api_stage_resource_path_match = cls.patch_api_stage_resource_path.match(path)
+            if patch_api_stage_resource_path_match:
+                if operation['op'] == "remove":
+                    pass
+
+                continue
+
+             = cls.patch_api_stage_resource_path.match(path)
+
 
     @classmethod
     def _patch_usage_plan_validate_paths(cls, patch_operations):
